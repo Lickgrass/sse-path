@@ -1,3 +1,6 @@
+import { InputError } from './errors.js';
+import { LIMITS, inRange } from './limits.js';
+import { VERSION } from './version.js';
 import type { Comparison, Finding, Observation, Report } from './types.js';
 import {
   integerIn,
@@ -164,7 +167,10 @@ export function validateReport(value: unknown): Report {
   if (
     !isRecord(value) ||
     value.schemaVersion !== 1 ||
-    value.toolVersion !== '0.1.0' ||
+    typeof value.toolVersion !== 'string' ||
+    value.toolVersion.length < 1 ||
+    value.toolVersion.length > LIMITS.maxVersionLength ||
+    /[^\x21-\x7e]/.test(value.toolVersion) ||
     typeof value.targetId !== 'string' ||
     !/^[a-f0-9]{64}$/.test(value.targetId) ||
     typeof value.startedAt !== 'string' ||
@@ -172,8 +178,8 @@ export function validateReport(value: unknown): Report {
     !Number.isFinite(Date.parse(value.startedAt)) ||
     !(value.runId === null || validRunId(value.runId)) ||
     !isRecord(value.policy) ||
-    !integerIn(value.policy.timeoutMs, 100, 120000) ||
-    !integerIn(value.policy.maxDeliveryLagMs, 1, 30000) ||
+    !inRange(value.policy.timeoutMs, LIMITS.timeoutMs) ||
+    !inRange(value.policy.maxDeliveryLagMs, LIMITS.maxDeliveryLagMs) ||
     typeof value.termination !== 'string' ||
     ![
       'complete',
@@ -189,10 +195,14 @@ export function validateReport(value: unknown): Report {
     !Array.isArray(value.observations) ||
     value.observations.length > MAX_EVENTS
   )
-    throw new Error('Invalid report.');
+    throw new InputError('report');
+  const policy = {
+    timeoutMs: value.policy.timeoutMs,
+    maxDeliveryLagMs: value.policy.maxDeliveryLagMs,
+  };
   const config = value.config === null ? null : parseConfig(value.config);
   if ((config === null) !== (value.runId === null))
-    throw new Error('Invalid report context.');
+    throw new InputError('report');
   let ticks = 0;
   let done = false;
   const observations: Observation[] = [];
@@ -201,31 +211,31 @@ export function validateReport(value: unknown): Report {
       !isRecord(raw) ||
       typeof raw.kind !== 'string' ||
       !['start', 'tick', 'heartbeat', 'done'].includes(raw.kind) ||
-      !numberIn(raw.emittedMs, 0, 120000) ||
-      !numberIn(raw.receivedMs, 0, 600000) ||
+      !numberIn(raw.emittedMs, 0, LIMITS.emittedMs) ||
+      !numberIn(raw.receivedMs, 0, LIMITS.receivedMs) ||
       !config ||
       done
     )
-      throw new Error('Invalid observation.');
+      throw new InputError('report');
     const previous = observations.at(-1);
     if (
       previous &&
       (raw.emittedMs < previous.emittedMs ||
         raw.receivedMs < previous.receivedMs)
     )
-      throw new Error('Nonmonotonic report.');
+      throw new InputError('report');
     if (!previous) {
-      if (raw.kind !== 'start') throw new Error('Missing start.');
+      if (raw.kind !== 'start') throw new InputError('report');
     } else if (raw.kind === 'tick') {
       if (raw.seq !== ++ticks || ticks > config.count)
-        throw new Error('Invalid sequence.');
+        throw new InputError('report');
     } else if (raw.kind === 'heartbeat') {
       if (config.scenario !== 'heartbeat' || ticks !== 1 || raw.seq !== ticks)
-        throw new Error('Invalid heartbeat.');
+        throw new InputError('report');
     } else if (raw.kind === 'done') {
-      if (ticks !== config.count) throw new Error('Incomplete report.');
+      if (ticks !== config.count) throw new InputError('report');
       done = true;
-    } else throw new Error('Repeated start.');
+    } else throw new InputError('report');
     const item: Observation = {
       kind: raw.kind as Observation['kind'],
       emittedMs: raw.emittedMs,
@@ -237,9 +247,7 @@ export function validateReport(value: unknown): Report {
   }
   if (
     (value.termination === 'complete' &&
-      observations.some(
-        (o) => o.receivedMs > (value.policy as { timeoutMs: number }).timeoutMs,
-      )) ||
+      observations.some((o) => o.receivedMs > policy.timeoutMs)) ||
     (config !== null && observations.length === 0) ||
     (value.termination === 'complete' && (!done || value.httpStatus !== 200)) ||
     (done &&
@@ -247,18 +255,15 @@ export function validateReport(value: unknown): Report {
         String(value.termination),
       ))
   )
-    throw new Error('Inconsistent completion.');
+    throw new InputError('report');
   const report: Report = {
     schemaVersion: 1,
-    toolVersion: '0.1.0',
+    toolVersion: value.toolVersion,
     targetId: value.targetId,
     runId: value.runId as string | null,
     startedAt: value.startedAt,
     config,
-    policy: {
-      timeoutMs: value.policy.timeoutMs,
-      maxDeliveryLagMs: value.policy.maxDeliveryLagMs,
-    },
+    policy,
     termination: value.termination as Report['termination'],
     httpStatus: value.httpStatus as number | null,
     observations,
@@ -336,7 +341,7 @@ export function compareReports(
 export function formatReport(input: Report): string {
   const report = validateReport(input);
   const lines = [
-    'SSE Path 0.1.0 — controlled route delivery',
+    `SSE Path ${VERSION} — controlled route delivery`,
     '',
     report.status.toUpperCase() + ' · termination: ' + report.termination,
   ];
@@ -350,6 +355,8 @@ export function formatReport(input: Report): string {
     'Client arrival span: ' + display(report.metrics.arrivalSpanMs),
     'Maximum catch-up: ' + display(report.metrics.maxCatchUpMs),
     'First event: ' + display(report.metrics.firstEventMs),
+    'Maximum arrival gap: ' + display(report.metrics.maxArrivalGapMs),
+    'Captured with tool version: ' + report.toolVersion,
     '',
     'Scope: controlled route → CLI. The responsible buffering layer is unknown.',
   );

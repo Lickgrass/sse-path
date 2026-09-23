@@ -23,11 +23,11 @@ No third-party security audit or security certification is claimed. Supported fi
 - Probe only endpoints you control or have permission to test. The CLI makes an outbound request to the URL you explicitly provide. It is not a safe general-purpose fetch service for untrusted URLs, including when embedded in another application.
 - Use HTTPS outside local development. Loopback HTTP is allowed automatically; `--allow-http` explicitly permits remote HTTP on a trusted network. Bearer authentication over plaintext can be observed on the network.
 - Set the token through `SSE_PATH_TOKEN`. Avoid shell tracing and do not put secrets in process arguments or URLs.
-- The probe does not print raw exceptions, headers, or response bodies. Reports retain constrained synthetic timing evidence rather than captured application content.
+- The CLI prints only fixed validation messages and locally authored CLI errors, never raw exceptions, headers, or response bodies. Reports retain constrained synthetic timing evidence rather than captured application content.
 - The target identifier is a hash, not a secrecy guarantee for guessable URLs. Timing, scenario configuration, and run metadata can still disclose operational information.
 - Saved reports are data, not authenticated attestations. Someone can manufacture a well-formed report. Validate conclusions using a fresh probe on infrastructure you trust.
 - The CLI bounds report reads, refuses symlink report inputs, and creates new output files exclusively with mode `0600`. On POSIX filesystems this requests owner-only access. On Windows it does not establish a private ACL: use a directory with appropriate access controls. Protect the parent directory: these checks are not a filesystem sandbox against another user who can mutate that directory.
-- A failed or interrupted write may leave an incomplete newly created file. It will not replace a previous report. Delete the incomplete file or choose a fresh path before retrying.
+- Invalid probe URLs, tokens, and timing options are rejected before creating the output file. A failed or interrupted write may leave an incomplete newly created file. It will not replace a previous report. Delete the incomplete file or choose a fresh path before retrying.
 
 ## What a result does not establish
 

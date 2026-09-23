@@ -163,3 +163,97 @@ test('CLI preserves existing output and refuses symlink inputs', async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('invalid probe inputs leave no output file and permit a valid retry', async () => {
+  const fixture = await createLocalFixture();
+  const directory = await mkdtemp(join(tmpdir(), 'sse-path-validation-'));
+  const file = join(directory, 'report.json');
+  const secret = 'secret-marker-that-must-never-appear';
+  try {
+    const cases = [
+      { url: 'not-a-url-' + secret, message: /valid HTTP\(S\) endpoint/ },
+      {
+        url: 'ftp://example.invalid/' + secret,
+        message: /Use HTTPS or loopback HTTP/,
+      },
+      {
+        url: 'http://example.invalid/' + secret,
+        message: /remote HTTP requires --allow-http/,
+      },
+      {
+        url: 'https://user:' + secret + '@example.invalid/',
+        message: /credentials and fragments are forbidden/,
+      },
+      {
+        url: fixture.url,
+        token: secret + '!',
+        message: /RFC 6750 bearer-token characters/,
+      },
+      {
+        url: fixture.url,
+        options: ['--timeout-ms', '99'],
+        message: /timeoutMs must be/,
+      },
+      {
+        url: fixture.url,
+        options: ['--max-delivery-lag-ms', '30001'],
+        message: /maxDeliveryLagMs must be/,
+      },
+    ];
+    for (const entry of cases) {
+      const result = await cli(
+        ['probe', entry.url, '--out', file, ...(entry.options ?? [])],
+        entry.token ?? LOCAL_TOKEN,
+      );
+      assert.equal(result.code, 2);
+      assert.match(result.stderr, entry.message);
+      assert.ok(!`${result.stdout}${result.stderr}`.includes(secret));
+      await assert.rejects(stat(file), { code: 'ENOENT' });
+    }
+    const result = await cli([
+      'probe',
+      fixture.url,
+      '--out',
+      file,
+      '--timeout-ms',
+      '5000',
+      '--max-delivery-lag-ms',
+      '120',
+      '--json',
+    ]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(JSON.parse(await readFile(file, 'utf8')).status, 'passed');
+  } finally {
+    await fixture.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('subcommands accept help without requiring input or credentials', async () => {
+  for (const command of ['probe', 'inspect', 'compare']) {
+    for (const flag of ['--help', '-h']) {
+      const result = await cli([command, flag], 'invalid!');
+      assert.equal(result.code, 0, result.stderr);
+      assert.match(result.stdout, /sse-path probe URL/);
+      assert.equal(result.stderr, '');
+    }
+  }
+});
+
+test('report validation errors are useful without reflecting report content', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'sse-path-report-error-'));
+  const file = join(directory, 'invalid.json');
+  const secret = 'do-not-print-report-content';
+  try {
+    await writeFile(
+      file,
+      JSON.stringify({ schemaVersion: 999, token: secret }),
+    );
+    const result = await cli(['inspect', file]);
+    assert.equal(result.code, 2);
+    assert.match(result.stderr, /Invalid or unsupported report/);
+    assert.ok(!`${result.stdout}${result.stderr}`.includes(secret));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

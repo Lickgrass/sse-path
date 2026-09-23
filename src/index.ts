@@ -15,3 +15,5 @@ export type {
   Finding,
   Observation,
 } from './types.js';
+
+export { InputError } from './errors.js';

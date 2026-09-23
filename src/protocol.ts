@@ -1,42 +1,20 @@
-import type { Observation, ProbeConfig, StartEvent } from './types.js';
+import {
+  LIMITS,
+  isRecord,
+  numberIn,
+  validateConfig as parseConfig,
+} from './limits.js';
+import type { Observation, StartEvent } from './types.js';
 
-export const MAX_EVENTS = 1024;
-export const MAX_BYTES = 262144;
-export const MAX_FRAME = 16384;
-export const isRecord = (v: unknown): v is Record<string, unknown> =>
-  typeof v === 'object' && v !== null && !Array.isArray(v);
-export function numberIn(v: unknown, low: number, high: number): v is number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= low && v <= high;
-}
-export function integerIn(v: unknown, low: number, high: number): v is number {
-  return numberIn(v, low, high) && Number.isInteger(v);
-}
-export function parseConfig(v: unknown): ProbeConfig {
-  if (
-    !isRecord(v) ||
-    typeof v.scenario !== 'string' ||
-    !['steady', 'idle', 'heartbeat'].includes(v.scenario) ||
-    !integerIn(v.count, 2, 100) ||
-    !integerIn(v.intervalMs, 50, 5000) ||
-    !integerIn(v.idleMs, 0, 30000) ||
-    !integerIn(v.heartbeatMs, 50, 5000)
-  ) {
-    throw new Error('Invalid diagnostic configuration.');
-  }
-  const duration =
-    v.scenario === 'steady'
-      ? (v.count - 1) * v.intervalMs
-      : (v.count - 2) * v.intervalMs + v.idleMs;
-  if (duration > 60000)
-    throw new Error('Diagnostic duration exceeds the limit.');
-  return {
-    scenario: v.scenario as ProbeConfig['scenario'],
-    count: v.count,
-    intervalMs: v.intervalMs,
-    idleMs: v.idleMs,
-    heartbeatMs: v.heartbeatMs,
-  };
-}
+export {
+  isRecord,
+  numberIn,
+  integerIn,
+  validateConfig as parseConfig,
+} from './limits.js';
+export const MAX_EVENTS = LIMITS.maxEvents;
+export const MAX_BYTES = LIMITS.maxBytes;
+export const MAX_FRAME = LIMITS.maxFrameBytes;
 export function validRunId(v: unknown): v is string {
   return (
     typeof v === 'string' &&
@@ -49,9 +27,11 @@ export function validRunId(v: unknown): v is string {
 /** Bounded incremental SSE framing; handles LF, CRLF and CR across chunk boundaries. */
 export class SseParser {
   private line = '';
+  private lineBytes = 0;
   private data: string[] = [];
+  private dataBytes = 0;
   private event = '';
-  private frameSize = 0;
+  private eventBytes = 0;
   private afterCr = false;
   constructor(
     private readonly dispatch: (event: string, data: string) => void,
@@ -62,12 +42,13 @@ export class SseParser {
         this.afterCr = false;
         if (ch === '\n') continue;
       }
-      if (++this.frameSize > MAX_FRAME)
-        throw new Error('SSE frame limit exceeded.');
       if (ch === '\r' || ch === '\n') {
         this.consumeLine();
         this.afterCr = ch === '\r';
       } else {
+        this.lineBytes += Buffer.byteLength(ch, 'utf8');
+        if (this.lineBytes > MAX_FRAME)
+          throw new Error('SSE frame limit exceeded.');
         this.line += ch;
       }
     }
@@ -75,13 +56,15 @@ export class SseParser {
   private consumeLine(): void {
     const line = this.line;
     this.line = '';
+    this.lineBytes = 0;
     if (line === '') {
       const event = this.event || 'message';
       const data = this.data.join('\n');
       const hasData = this.data.length > 0;
       this.event = '';
       this.data = [];
-      this.frameSize = 0;
+      this.eventBytes = 0;
+      this.dataBytes = 0;
       if (hasData) this.dispatch(event, data);
       return;
     }
@@ -90,8 +73,21 @@ export class SseParser {
     const key = colon === -1 ? line : line.slice(0, colon);
     let value = colon === -1 ? '' : line.slice(colon + 1);
     if (value.startsWith(' ')) value = value.slice(1);
-    if (key === 'data') this.data.push(value);
-    if (key === 'event') this.event = value;
+    if (key === 'data') {
+      // Include one separator byte per field so even empty data lines are bounded.
+      const bytes = Buffer.byteLength(value, 'utf8') + 1;
+      if (this.dataBytes + bytes + this.eventBytes > MAX_FRAME)
+        throw new Error('SSE frame limit exceeded.');
+      this.dataBytes += bytes;
+      this.data.push(value);
+    }
+    if (key === 'event') {
+      const bytes = Buffer.byteLength(value, 'utf8');
+      if (this.dataBytes + bytes > MAX_FRAME)
+        throw new Error('SSE frame limit exceeded.');
+      this.eventBytes = bytes;
+      this.event = value;
+    }
   }
 }
 
@@ -107,7 +103,7 @@ export class ProtocolCollector {
     if (
       !isRecord(v) ||
       !validRunId(v.runId) ||
-      !numberIn(v.emittedMs, 0, 120000)
+      !numberIn(v.emittedMs, 0, LIMITS.emittedMs)
     ) {
       throw new Error('Invalid diagnostic event.');
     }

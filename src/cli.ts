@@ -10,8 +10,10 @@ import {
   validateReport,
 } from './index.js';
 import type { ProbeOptions, Report } from './types.js';
-
-const MAX_REPORT_BYTES = 1024 * 1024;
+import { InputError } from './errors.js';
+import { validateProbeInput } from './input.js';
+import { LIMITS, validatePolicy } from './limits.js';
+import { VERSION } from './version.js';
 const HELP = `sse-path — measure incremental SSE delivery
 
 Usage:
@@ -94,33 +96,27 @@ function parse(args: string[]): Arguments {
       parsed.out = value;
       continue;
     }
-    if (
-      !/^[0-9]+$/.test(value) ||
-      !Number.isSafeInteger(Number(value)) ||
-      Number(value) < 1
-    ) {
+    if (!/^[0-9]+$/.test(value) || !Number.isSafeInteger(Number(value))) {
       throw new CliError(
         'Timing options require positive whole numbers of milliseconds.',
       );
     }
     const milliseconds = Number(value);
     if (argument === '--timeout-ms') {
-      if (milliseconds < 100 || milliseconds > 120_000) {
-        throw new CliError('--timeout-ms must be between 100 and 120000.');
-      }
       parsed.probeOptions.timeoutMs = milliseconds;
     } else {
-      if (milliseconds > 30_000) {
-        throw new CliError(
-          '--max-delivery-lag-ms must be between 1 and 30000.',
-        );
-      }
       parsed.probeOptions.maxDeliveryLagMs = milliseconds;
     }
   }
   const expected = command === 'compare' ? 2 : 1;
   if (parsed.positional.length !== expected) {
     throw new CliError('Wrong number of arguments. Run sse-path --help.');
+  }
+  if (command === 'probe') {
+    validatePolicy(
+      parsed.probeOptions.timeoutMs ?? LIMITS.timeoutMs.default,
+      parsed.probeOptions.maxDeliveryLagMs ?? LIMITS.maxDeliveryLagMs.default,
+    );
   }
   return parsed;
 }
@@ -132,7 +128,7 @@ async function readReport(path: string): Promise<Report> {
     if (
       !before.isFile() ||
       before.isSymbolicLink() ||
-      before.size > MAX_REPORT_BYTES
+      before.size > LIMITS.maxReportBytes
     ) {
       throw new Error();
     }
@@ -145,14 +141,14 @@ async function readReport(path: string): Promise<Report> {
     const opened = await file.stat();
     if (
       !opened.isFile() ||
-      opened.size > MAX_REPORT_BYTES ||
+      opened.size > LIMITS.maxReportBytes ||
       opened.dev !== before.dev ||
       opened.ino !== before.ino
     ) {
       throw new Error();
     }
     // The extra byte also rejects files that grow after the initial stat.
-    const buffer = Buffer.alloc(MAX_REPORT_BYTES + 1);
+    const buffer = Buffer.alloc(LIMITS.maxReportBytes + 1);
     let bytes = 0;
     while (bytes < buffer.length) {
       const result = await file.read(
@@ -164,11 +160,12 @@ async function readReport(path: string): Promise<Report> {
       if (result.bytesRead === 0) break;
       bytes += result.bytesRead;
     }
-    if (bytes > MAX_REPORT_BYTES) throw new Error();
+    if (bytes > LIMITS.maxReportBytes) throw new Error();
     return validateReport(
       JSON.parse(buffer.subarray(0, bytes).toString('utf8')),
     );
-  } catch {
+  } catch (error: unknown) {
+    if (error instanceof InputError) throw error;
     throw new CliError(
       'Cannot read report: use a valid report in a regular, non-symlink file of at most 1 MiB.',
     );
@@ -202,13 +199,15 @@ async function main(): Promise<number> {
   const args = process.argv.slice(2);
   if (
     args.length === 0 ||
-    (args.length === 1 && ['--help', '-h'].includes(args[0]!))
+    (args.length === 1 && ['--help', '-h'].includes(args[0]!)) ||
+    (['probe', 'inspect', 'compare'].includes(args[0]!) &&
+      args.slice(1).some((argument) => ['--help', '-h'].includes(argument)))
   ) {
     process.stdout.write(HELP);
     return 0;
   }
   if (args.length === 1 && args[0] === '--version') {
-    process.stdout.write('0.1.0\n');
+    process.stdout.write(`${VERSION}\n`);
     return 0;
   }
   const parsed = parse(args);
@@ -232,6 +231,13 @@ async function main(): Promise<number> {
         ? 1
         : 2;
   }
+  const token = process.env.SSE_PATH_TOKEN;
+  const options: ProbeOptions = {
+    ...parsed.probeOptions,
+    ...(token === undefined ? {} : { token }),
+  };
+  // Validate all request inputs before creating even an empty output file.
+  validateProbeInput(parsed.positional[0]!, options);
   const controller = new AbortController();
   const abort = (): void => controller.abort();
   process.once('SIGINT', abort);
@@ -240,10 +246,8 @@ async function main(): Promise<number> {
   try {
     // Reserve the output before any request, so an existing path fails locally.
     if (parsed.out !== undefined) output = await reserveReport(parsed.out);
-    const token = process.env.SSE_PATH_TOKEN;
     const report = await probe(parsed.positional[0]!, {
-      ...parsed.probeOptions,
-      ...(token === undefined ? {} : { token }),
+      ...options,
       signal: controller.signal,
     });
     if (output !== undefined) {
@@ -267,7 +271,8 @@ async function main(): Promise<number> {
   }
 }
 
-// Never print exception text from network, parsing, filesystem, or caller input.
+// Only fixed validation messages and local CLI errors may cross this boundary.
+// Never print arbitrary exceptions from network, parsing, or filesystem APIs.
 process.stdout.on('error', () => {
   process.exitCode = 2;
 });
@@ -277,7 +282,7 @@ void main().then(
   },
   (error: unknown) => {
     process.stderr.write(
-      `sse-path: ${error instanceof CliError ? error.message : 'Request or input could not be processed. Check the URL, token, and timing options; run sse-path --help.'}\n`,
+      `sse-path: ${error instanceof CliError || error instanceof InputError ? error.message : 'Request or input could not be processed. Check the URL, token, and timing options; run sse-path --help.'}\n`,
     );
     process.exitCode = 2;
   },

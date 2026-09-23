@@ -63,7 +63,7 @@ export type Termination =
   | 'limit';
 export interface Report {
   schemaVersion: 1;
-  toolVersion: '0.1.0';
+  toolVersion: string;
   targetId: string;
   runId: string | null;
   startedAt: string;
