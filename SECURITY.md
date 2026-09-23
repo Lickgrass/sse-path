@@ -4,9 +4,9 @@ SSE Path is a local diagnostic client and an opt-in synthetic streaming route. I
 
 ## Reporting an issue
 
-Please do not post tokens, private URLs, production reports, or a working credential exploit in a public issue. Use the private vulnerability reporting option on this repository if enabled. If it is unavailable, open a minimal public issue asking maintainers for a private reporting channel, without technical exploit details or sensitive data. A dedicated reporting address has not been established for this initial source release.
+Please do not post tokens, private URLs, production reports, or a working credential exploit in a public issue. Use the private vulnerability reporting option on this repository if enabled. If it is unavailable, open a minimal public issue asking maintainers for a private reporting channel, without technical exploit details or sensitive data. A dedicated reporting address has not been established for this initial release.
 
-No third-party security audit or security certification is claimed. Supported fixes initially target the latest source version.
+No third-party security audit or security certification is claimed. Security fixes target the latest released version; use the latest patch release in the 0.1 series.
 
 ## Diagnostic route
 
