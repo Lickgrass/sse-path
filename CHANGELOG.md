@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 — Unreleased
+## 0.1.0 — 2026-09-23
 
 - Add an authenticated synthetic SSE route with steady, idle, and heartbeat scenarios.
 - Add a local probe that records bounded emission and arrival evidence.
@@ -15,4 +15,4 @@
 - Ignore local editor settings, enforce LF checkouts, and check dependency updates with Dependabot.
 - Prepare a disabled manual npm release workflow that publishes the exact tested archive with provenance after maintainer setup.
 
-This source version has not been published to npm. No live provider certification or independent security audit is claimed.
+Initial public npm release under `@lickgrass/sse-path`. No live provider certification or independent security audit is claimed.
