@@ -10,9 +10,11 @@ Built by [Lickgrass](https://lickgrass.com). MIT licensed. No account, telemetry
 
 ## Try it locally
 
-Requires Node.js 22.14 or newer and npm. From this repository:
+Requires Node.js 22.14 or newer and npm:
 
 ```sh
+git clone https://github.com/Lickgrass/sse-path.git
+cd sse-path
 npm ci --ignore-scripts
 npm run build
 npm run demo

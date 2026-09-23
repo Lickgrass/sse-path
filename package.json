@@ -5,6 +5,14 @@
   "type": "module",
   "license": "MIT",
   "author": "Lickgrass (https://lickgrass.com)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Lickgrass/sse-path.git"
+  },
+  "homepage": "https://github.com/Lickgrass/sse-path#readme",
+  "bugs": {
+    "url": "https://github.com/Lickgrass/sse-path/issues"
+  },
   "engines": {
     "node": ">=22.14.0"
   },
