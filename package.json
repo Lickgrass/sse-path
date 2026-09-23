@@ -1,0 +1,65 @@
+{
+  "name": "@lickgrass/sse-path",
+  "version": "0.1.0",
+  "description": "Measure whether your deployment delivers SSE incrementally, using a controlled diagnostic route.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Lickgrass (https://lickgrass.com)",
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "bin": {
+    "sse-path": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./route": {
+      "types": "./dist/route.d.ts",
+      "import": "./dist/route.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md",
+    "CHANGELOG.md",
+    "docs",
+    "examples"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "keywords": [
+    "sse",
+    "streaming",
+    "debugging",
+    "nextjs",
+    "proxy",
+    "buffering"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "demo": "npm run build && node examples/local-demo.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check:package": "npm run build && node scripts/check-package.mjs",
+    "check": "npm run format:check && npm run typecheck && npm test && npm run check:package",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run check"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "7.0.2",
+    "prettier": "3.9.8"
+  }
+}

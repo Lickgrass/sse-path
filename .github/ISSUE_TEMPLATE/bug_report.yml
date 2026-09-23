@@ -1,0 +1,34 @@
+name: Bug report
+description: Report unexpected behavior with a synthetic reproduction.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please omit tokens, private URLs, response headers, and production data.
+        For vulnerabilities, follow SECURITY.md rather than posting exploit details here.
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+      description: Describe the observation and which conclusion seems incorrect.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Use a local synthetic route and the smallest steps that reproduce it.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: SSE Path version, Node version, OS, framework or proxy if relevant
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Reviewed diagnostic evidence
+      description: Optional report excerpt, after checking for sensitive or identifying details.

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tgz
+reports/
+demo-reports/
+.env
+.env.*
+.DS_Store
