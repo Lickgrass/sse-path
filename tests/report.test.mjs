@@ -142,3 +142,33 @@ test('comparison requires same target, policy, configuration, fresh and later ev
     'not-verified',
   );
 });
+
+test('schema-compatible reports retain informational tool versions across upgrades', () => {
+  const before = sample(true);
+  const after = sample();
+  before.toolVersion = '0.0.9';
+  after.toolVersion = '1.2.3-beta.1+build.42';
+  after.startedAt = '2026-01-01T00:00:30.000Z';
+  const imported = validateReport(after);
+  assert.equal(imported.toolVersion, after.toolVersion);
+  assert.match(
+    formatReport(imported),
+    /Captured with tool version: 1\.2\.3-beta\.1\+build\.42/,
+  );
+  assert.match(formatReport(imported), /Maximum arrival gap: 500\.0 ms/);
+  assert.equal(
+    compareReports(validateReport(before), imported).status,
+    'verified',
+  );
+  for (const version of [
+    '',
+    'x'.repeat(65),
+    '\u001b[31m',
+    '\n',
+    null,
+    ['0.1.0'],
+  ]) {
+    assert.throws(() => validateReport({ ...after, toolVersion: version }));
+  }
+  assert.throws(() => validateReport({ ...after, schemaVersion: 2 }));
+});

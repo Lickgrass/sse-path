@@ -1,54 +1,19 @@
 import { createHash } from 'node:crypto';
+import { validateProbeInput } from './input.js';
+import { VERSION } from './version.js';
 import { analyzeReport } from './report.js';
-import {
-  integerIn,
-  MAX_BYTES,
-  ProtocolCollector,
-  SseParser,
-} from './protocol.js';
+import { MAX_BYTES, ProtocolCollector, SseParser } from './protocol.js';
 import type { ProbeOptions, Report } from './types.js';
 
 export async function probe(
   address: string,
   options: ProbeOptions = {},
 ): Promise<Report> {
-  let url: URL;
-  try {
-    url = new URL(address);
-  } catch {
-    throw new Error('Provide a valid HTTP(S) endpoint.');
-  }
-  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-  if (
-    !['http:', 'https:'].includes(url.protocol) ||
-    url.username ||
-    url.password ||
-    url.hash ||
-    (url.protocol === 'http:' && !loopback && !options.allowHttp)
-  ) {
-    throw new Error(
-      'Use HTTPS or loopback HTTP; remote HTTP requires explicit allowHttp. URL credentials and fragments are forbidden.',
-    );
-  }
-  const timeoutMs = options.timeoutMs ?? 15000;
-  const maxDeliveryLagMs = options.maxDeliveryLagMs ?? 250;
-  if (
-    !integerIn(timeoutMs, 100, 120000) ||
-    !integerIn(maxDeliveryLagMs, 1, 30000)
-  )
-    throw new Error('Invalid timing policy.');
-  if (
-    options.token !== undefined &&
-    (typeof options.token !== 'string' ||
-      options.token.length < 32 ||
-      options.token.length > 4096 ||
-      /[^\x21-\x7e]/.test(options.token))
-  ) {
-    throw new Error('Token must contain 32–4096 visible ASCII characters.');
-  }
+  const { url, policy } = validateProbeInput(address, options);
+  const { timeoutMs, maxDeliveryLagMs } = policy;
   const report: Report = {
     schemaVersion: 1,
-    toolVersion: '0.1.0',
+    toolVersion: VERSION,
     targetId: createHash('sha256').update(url.href).digest('hex'),
     runId: null,
     startedAt: new Date().toISOString(),

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { getEventListeners } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import { createDiagnosticRoute } from '../dist/route.js';
@@ -74,6 +75,10 @@ test('route rejects incorrect credentials without reflecting them or adding CORS
     assert.equal(result.headers.get('access-control-allow-origin'), null);
     assert.equal(await result.text(), 'Authorization required.\n');
   }
+  const anonymousPost = handler(request({ method: 'POST', headers: {} }));
+  assert.equal(anonymousPost.status, 401);
+  assert.equal(anonymousPost.headers.get('allow'), null);
+  assert.equal(await anonymousPost.text(), 'Authorization required.\n');
   const result = handler(request({ method: 'POST' }));
   assert.equal(result.status, 405);
   assert.equal(result.headers.get('allow'), 'GET');
@@ -197,4 +202,139 @@ test('slow consumers do not generate an unbounded queue or fictitious emissions'
   for (let i = 1; i < ticks.length; i++) {
     assert.ok(ticks[i].emittedMs - ticks[i - 1].emittedMs >= 50);
   }
+});
+
+test('numeric timer handles support completion and release concurrency', async () => {
+  const handler = route({ count: 2, maxConcurrent: 1 });
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const handles = new Map();
+  let nextHandle = 1;
+  globalThis.setTimeout = (callback, milliseconds, ...args) => {
+    const id = nextHandle++;
+    handles.set(
+      id,
+      originalSetTimeout(() => {
+        handles.delete(id);
+        callback(...args);
+      }, milliseconds),
+    );
+    return id;
+  };
+  globalThis.clearTimeout = (id) => {
+    const handle = handles.get(id);
+    handles.delete(id);
+    if (handle !== undefined) originalClearTimeout(handle);
+  };
+  try {
+    const response = handler(request());
+    assert.equal(response.status, 200);
+    assert.equal(handler(request()).status, 429);
+    assert.equal(events(await response.text()).at(-1).kind, 'done');
+    const next = handler(request());
+    assert.equal(next.status, 200);
+    await next.body.cancel();
+    assert.equal(handles.size, 0);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+    for (const handle of handles.values()) originalClearTimeout(handle);
+  }
+});
+
+test('a throwing start hook clears timers, listeners, and the concurrency slot', async () => {
+  const handler = route({ maxConcurrent: 1 });
+  const failedRequest = request();
+  const listenersBefore = getEventListeners(
+    failedRequest.signal,
+    'abort',
+  ).length;
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const handles = new Set();
+  let cleared = 0;
+  globalThis.setTimeout = (...args) => {
+    const handle = originalSetTimeout(...args);
+    handles.add(handle);
+    handle.unref = () => {
+      throw new Error('Injected start failure.');
+    };
+    return handle;
+  };
+  globalThis.clearTimeout = (handle) => {
+    if (handles.delete(handle)) cleared += 1;
+    originalClearTimeout(handle);
+  };
+  try {
+    assert.throws(() => handler(failedRequest), /Injected start failure/);
+    assert.equal(cleared, 1);
+    assert.equal(handles.size, 0);
+    assert.equal(
+      getEventListeners(failedRequest.signal, 'abort').length,
+      listenersBefore,
+    );
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+    for (const handle of handles) originalClearTimeout(handle);
+  }
+  const next = handler(request());
+  assert.equal(next.status, 200);
+  await next.body.cancel();
+});
+
+test('stream and Response construction failures release concurrency', async () => {
+  for (const constructor of ['ReadableStream', 'Response']) {
+    const handler = route({ maxConcurrent: 1 });
+    const failedRequest = request();
+    const listenersBefore = getEventListeners(
+      failedRequest.signal,
+      'abort',
+    ).length;
+    const Original = globalThis[constructor];
+    globalThis[constructor] = class extends Original {
+      constructor(...args) {
+        super(...args);
+        throw new Error('Injected construction failure.');
+      }
+    };
+    try {
+      assert.throws(
+        () => handler(failedRequest),
+        /Injected construction failure/,
+      );
+      assert.equal(
+        getEventListeners(failedRequest.signal, 'abort').length,
+        listenersBefore,
+      );
+    } finally {
+      globalThis[constructor] = Original;
+    }
+    const next = handler(request());
+    assert.equal(next.status, 200);
+    await next.body.cancel();
+  }
+});
+
+test('the lifetime watchdog releases a stalled stream and its slot', async () => {
+  const handler = route({ maxConcurrent: 1 });
+  const originalSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (callback, milliseconds, ...args) =>
+    originalSetTimeout(
+      callback,
+      milliseconds === 65000 ? 10 : milliseconds,
+      ...args,
+    );
+  let response;
+  try {
+    response = handler(request());
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+  }
+  // Do not read: the internally queued start frame otherwise occupies the slot.
+  await delay(30);
+  await assert.rejects(response.text(), /lifetime exceeded/);
+  const next = handler(request());
+  assert.equal(next.status, 200);
+  await next.body.cancel();
 });

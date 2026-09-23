@@ -60,7 +60,7 @@ export function GET(request: Request) {
 }
 ```
 
-Generate a dedicated high-entropy secret, put it in your application's deployment environment, and set the same `SSE_PATH_TOKEN` in the shell running the CLI. A password manager or your normal secret manager is preferable to a literal secret in shell history. The token is read at request time in this example, so a build does not require it. Restart the application after rotating it; the initialized handler retains its token and concurrency limit.
+Generate a dedicated high-entropy secret of 32–512 RFC 6750 bearer-token characters (for example, base64url), put it in your application's deployment environment, and set the same `SSE_PATH_TOKEN` in the shell running the CLI. A password manager or your normal secret manager is preferable to a literal secret in shell history. The token is read at request time in this example, so a build does not require it. Restart the application after rotating it; the initialized handler retains its token and concurrency limit.
 
 The route only emits synthetic timing metadata. Keep it temporary, protected, and behind your normal access controls. A valid token still permits requests that consume connections. Remove the route when finished. See [security guidance](SECURITY.md).
 
@@ -71,7 +71,7 @@ node dist/cli.js probe https://your-app.example/api/stream-check --out after.jso
 node dist/cli.js compare before.json after.json
 ```
 
-Use fresh filenames: output is created exclusively with mode `0600`, and existing files and symlinks are never overwritten. The directory must already exist. On POSIX filesystems this requests owner-only access. On Windows, mode `0600` does not set a private ACL: use an output directory whose ACL already limits access appropriately.
+Invalid URLs, tokens, or timing options are rejected before an output file is created. Use fresh filenames: output is created exclusively with mode `0600`, and existing files and symlinks are never overwritten. The directory must already exist. On POSIX filesystems this requests owner-only access. On Windows, mode `0600` does not set a private ACL: use an output directory whose ACL already limits access appropriately.
 
 ## What it measures
 
@@ -123,9 +123,11 @@ Missing evidence is reported as unknown. A successful HTTP status alone is not a
 
 Reports contain synthetic event timing, a hashed target identifier, scenario settings, findings, and coverage limits. They omit the requested URL, token, response headers, and arbitrary application content. A target hash is pseudonymous, not anonymous: someone who guesses a URL may recognize it. Treat reports as internal diagnostics until reviewed.
 
-Inspect and compare accept regular, non-symlink JSON report files of at most 1 MiB. Malformed reports are rejected, and derived metrics and verdicts are recomputed from the validated observations instead of trusting stored conclusions. Report parsing does not replay requests, execute code, or load referenced resources. Network error details are deliberately not printed because they may contain credentials or URLs.
+Inspect and compare accept regular, non-symlink JSON report files of at most 1 MiB. Report compatibility is determined by `schemaVersion`, not the producing tool version. `toolVersion` is bounded informational metadata, so compatible reports remain inspectable and comparable across tool upgrades. Malformed reports are rejected, and derived metrics and verdicts are recomputed from the validated observations instead of trusting stored conclusions. Report parsing does not replay requests, execute code, or load referenced resources. Fixed validation messages identify invalid options and unsupported reports. Raw network, parser, and filesystem error details are deliberately not printed because they may contain credentials or URLs.
 
 ## Development
+
+Maintainers: see [releasing to npm](docs/releasing.md) for the disabled release workflow, trusted publisher setup, and tested package retention.
 
 ```sh
 npm ci --ignore-scripts

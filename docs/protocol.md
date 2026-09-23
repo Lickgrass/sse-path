@@ -3,7 +3,10 @@
 The diagnostic route emits synthetic SSE metadata. It never relays application
 stream content, reflects request parameters, or includes the authorization token
 in its output. The route runs in Node.js and uses the standard `Request` and
-`Response` interfaces.
+`Response` interfaces. Node.js 22.14 or newer is the supported runtime; these
+interfaces do not imply support for edge runtimes, Deno, or Workers, which have
+not been validated. Numeric timer handles are tolerated, but the route still
+uses Node.js modules. Use `runtime = 'nodejs'` in a Next.js route.
 
 Configure a randomly generated bearer token with at least 32 characters. The
 factory rejects missing tokens, whitespace, unsupported token characters, and
@@ -79,9 +82,10 @@ fabricate earlier timestamps or enqueue a backlog of missed heartbeats. A test
 that requires regularly spaced source emissions must check the observed source
 schedule as well as client arrival times.
 
-Cancellation, request abort, completion, and the lifetime cap clear timers and
-release concurrency. Excess simultaneous requests return 429; invalid
-authorization returns 401; other methods return 405. A request already aborted
+Cancellation, request abort, completion, the lifetime cap, and setup failures
+clear timers and release concurrency. Excess simultaneous requests return 429;
+invalid authorization returns 401 regardless of the HTTP method. Authenticated
+requests using other methods return 405. A request already aborted
 before creating a stream returns 408. Limits apply independently to each handler
 instance and process, not across an entire deployment. Remove the temporary
 diagnostic route and its token after testing.

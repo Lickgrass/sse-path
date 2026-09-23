@@ -6,3 +6,4 @@ demo-reports/
 .env
 .env.*
 .DS_Store
+.claude/

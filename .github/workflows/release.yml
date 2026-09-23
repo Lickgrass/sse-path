@@ -1,0 +1,212 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Reviewed stable release tag (vX.Y.Z)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release candidate
+    if: github.repository == 'Lickgrass/sse-path' && vars.ENABLE_NPM_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      commit: ${{ steps.candidate.outputs.commit }}
+      archive: ${{ steps.archive.outputs.filename }}
+      sha256: ${{ steps.archive.outputs.sha256 }}
+      run-id: ${{ steps.archive.outputs.run-id }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - name: Validate tag input
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          node --input-type=module <<'NODE'
+          const env = process.env;
+          if (!/^v[0-9]+\.[0-9]+\.[0-9]+$/.test(env.RELEASE_TAG ?? '') ||
+              env.GITHUB_REF_TYPE !== 'tag' ||
+              env.GITHUB_REF !== `refs/tags/${env.RELEASE_TAG}` ||
+              !/^[0-9a-f]{40}$/.test(env.GITHUB_SHA ?? '')) {
+            throw new Error('Dispatch the workflow from the same stable vX.Y.Z tag as release_tag.');
+          }
+          NODE
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Check reviewed commit and package version
+        id: candidate
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          git merge-base --is-ancestor HEAD refs/remotes/origin/main
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          if (commit !== process.env.GITHUB_SHA) {
+            throw new Error('The candidate commit does not match the workflow source commit.');
+          }
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+          if (pkg.name !== '@lickgrass/sse-path' || `v${pkg.version}` !== process.env.RELEASE_TAG ||
+              pkg.repository?.url !== 'git+https://github.com/Lickgrass/sse-path.git') {
+            throw new Error('The release tag does not match the expected package and version.');
+          }
+          NODE
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: npm audit --package-lock-only --audit-level=low
+      - name: Retain the tested package
+        run: npm run check:package -- --out-dir "$RUNNER_TEMP/sse-path-release"
+      - name: Record tested archive identity
+        id: archive
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          CANDIDATE_COMMIT: ${{ steps.candidate.outputs.commit }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, lstatSync, readFileSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
+          import { execFileSync } from 'node:child_process';
+          import { join } from 'node:path';
+          const env = process.env;
+          const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          if (!/^v[0-9]+\.[0-9]+\.[0-9]+$/.test(env.RELEASE_TAG ?? '') ||
+              commit !== env.GITHUB_SHA || commit !== env.CANDIDATE_COMMIT ||
+              !/^[1-9][0-9]*$/.test(env.GITHUB_RUN_ID ?? '')) {
+            throw new Error('The tested archive must belong to this validated source and run.');
+          }
+          const filename = `lickgrass-sse-path-${env.RELEASE_TAG.slice(1)}.tgz`;
+          const archive = join(env.RUNNER_TEMP, 'sse-path-release', filename);
+          const stat = lstatSync(archive);
+          if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1 || stat.size > 2 * 1024 * 1024) {
+            throw new Error('Unexpected tested package archive.');
+          }
+          const sha256 = createHash('sha256').update(readFileSync(archive)).digest('hex');
+          const metadata = JSON.parse(readFileSync(join(env.RUNNER_TEMP, 'sse-path-release', 'metadata.json'), 'utf8'));
+          if (metadata.schemaVersion !== 1 || metadata.name !== '@lickgrass/sse-path' ||
+              metadata.version !== env.RELEASE_TAG.slice(1) || metadata.filename !== filename ||
+              metadata.archiveBytes !== stat.size || metadata.sha256 !== sha256) {
+            throw new Error('The retained archive differs from the package checker test evidence.');
+          }
+          appendFileSync(env.GITHUB_OUTPUT, `filename=${filename}\nsha256=${sha256}\nrun-id=${env.GITHUB_RUN_ID}\n`);
+          NODE
+      - name: Upload the tested archive
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sse-path-release
+          path: ${{ runner.temp }}/sse-path-release/${{ steps.archive.outputs.filename }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          overwrite: false
+          include-hidden-files: false
+
+  publish:
+    name: Publish reviewed package with provenance
+    needs: validate
+    if: github.repository == 'Lickgrass/sse-path' && vars.ENABLE_NPM_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm
+    permissions:
+      id-token: write # npm trusted publishing and provenance use a short-lived OIDC token.
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Check OIDC-capable npm
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          const version = execFileSync('npm', ['--version'], { encoding: 'utf8' }).trim();
+          const [major, minor, patch] = version.split('.').map(Number);
+          if (!(major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1))))) {
+            throw new Error('npm 11.5.1 or newer is required for trusted publishing.');
+          }
+          NODE
+      - name: Check publication source identity
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          CANDIDATE_COMMIT: ${{ needs.validate.outputs.commit }}
+          CANDIDATE_RUN_ID: ${{ needs.validate.outputs.run-id }}
+          ARTIFACT_ID: ${{ needs.validate.outputs.artifact-id }}
+          ARCHIVE_NAME: ${{ needs.validate.outputs.archive }}
+          ARCHIVE_SHA256: ${{ needs.validate.outputs.sha256 }}
+        run: |
+          node --input-type=module <<'NODE'
+          const env = process.env;
+          if (!/^v[0-9]+\.[0-9]+\.[0-9]+$/.test(env.RELEASE_TAG ?? '') ||
+              env.GITHUB_REF_TYPE !== 'tag' ||
+              env.GITHUB_REF !== `refs/tags/${env.RELEASE_TAG}` ||
+              !/^[0-9a-f]{40}$/.test(env.GITHUB_SHA ?? '') ||
+              env.GITHUB_SHA !== env.CANDIDATE_COMMIT ||
+              !/^[1-9][0-9]*$/.test(env.GITHUB_RUN_ID ?? '') ||
+              env.GITHUB_RUN_ID !== env.CANDIDATE_RUN_ID ||
+              !/^[1-9][0-9]*$/.test(env.ARTIFACT_ID ?? '') ||
+              !Number.isSafeInteger(Number(env.ARTIFACT_ID)) ||
+              env.ARCHIVE_NAME !== `lickgrass-sse-path-${env.RELEASE_TAG.slice(1)}.tgz` ||
+              !/^[0-9a-f]{64}$/.test(env.ARCHIVE_SHA256 ?? '')) {
+            throw new Error('Publication artifact must match this dispatch tag, validated commit, and run.');
+          }
+          NODE
+      - name: Download the tested archive by immutable ID
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.validate.outputs.artifact-id }}
+          path: ${{ runner.temp }}/sse-path-publish
+          digest-mismatch: error
+      - name: Verify exact tested bytes
+        id: verified
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          ARCHIVE_NAME: ${{ needs.validate.outputs.archive }}
+          ARCHIVE_SHA256: ${{ needs.validate.outputs.sha256 }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
+          import { join } from 'node:path';
+          const env = process.env;
+          const directory = join(env.RUNNER_TEMP, 'sse-path-publish');
+          const filename = `lickgrass-sse-path-${(env.RELEASE_TAG ?? '').slice(1)}.tgz`;
+          const files = readdirSync(directory);
+          if (!/^v[0-9]+\.[0-9]+\.[0-9]+$/.test(env.RELEASE_TAG ?? '') ||
+              env.ARCHIVE_NAME !== filename || files.length !== 1 || files[0] !== filename ||
+              !/^[0-9a-f]{64}$/.test(env.ARCHIVE_SHA256 ?? '')) {
+            throw new Error('Unexpected publication archive identity or directory contents.');
+          }
+          const archive = join(directory, filename);
+          const stat = lstatSync(archive);
+          if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1 || stat.size > 2 * 1024 * 1024) {
+            throw new Error('Unexpected publication archive type or size.');
+          }
+          const sha256 = createHash('sha256').update(readFileSync(archive)).digest('hex');
+          if (sha256 !== env.ARCHIVE_SHA256) throw new Error('The tested archive SHA-256 does not match.');
+          appendFileSync(env.GITHUB_OUTPUT, `archive=${archive}\n`);
+          NODE
+      - name: Publish the exact tested archive
+        working-directory: ${{ runner.temp }}/sse-path-publish
+        env:
+          ARCHIVE_PATH: ${{ steps.verified.outputs.archive }}
+        run: npm publish "$ARCHIVE_PATH" --access public --provenance --ignore-scripts --registry https://registry.npmjs.org/

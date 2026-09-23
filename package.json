@@ -40,7 +40,9 @@
     "docs",
     "examples"
   ],
-  "sideEffects": false,
+  "sideEffects": [
+    "./dist/cli.js"
+  ],
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
