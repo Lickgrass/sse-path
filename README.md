@@ -6,11 +6,23 @@ SSE Path sends numbered, synthetic events through a small diagnostic route in yo
 
 Built by [Lickgrass](https://lickgrass.com). MIT licensed. No account, telemetry, or runtime dependencies. The tool works independently of your hosting provider.
 
-**Status:** initial source release. The intended package name is `@lickgrass/sse-path`; it has not been published to npm. Use the source commands below. This is a diagnostic tool, not a claim that an application is production ready.
+**Version 0.1.0:** an initial diagnostic release, not a claim that an application is production ready.
 
-## Try it locally
+## Install
 
 Requires Node.js 22.14 or newer and npm:
+
+```sh
+npx @lickgrass/sse-path --help
+```
+
+Install the route library in the application you want to test:
+
+```sh
+npm install @lickgrass/sse-path
+```
+
+## Run the local demo
 
 ```sh
 git clone https://github.com/Lickgrass/sse-path.git
@@ -27,15 +39,6 @@ node dist/cli.js --help
 ```
 
 ## Put a diagnostic route in your application
-
-To install the built package in another local application before publication:
-
-```sh
-# In the SSE Path repository:
-npm pack
-# In your application, use the actual path to the generated archive:
-npm install /absolute/path/to/lickgrass-sse-path-0.1.0.tgz
-```
 
 For a Next.js App Router application, add `app/api/stream-check/route.ts`:
 
@@ -65,10 +68,10 @@ Generate a dedicated high-entropy secret of 32–512 RFC 6750 bearer-token chara
 The route only emits synthetic timing metadata. Keep it temporary, protected, and behind your normal access controls. A valid token still permits requests that consume connections. Remove the route when finished. See [security guidance](SECURITY.md).
 
 ```sh
-node dist/cli.js probe https://your-app.example/api/stream-check --out before.json
+npx @lickgrass/sse-path probe https://your-app.example/api/stream-check --out before.json
 # Change your proxy or application configuration, then deploy it.
-node dist/cli.js probe https://your-app.example/api/stream-check --out after.json
-node dist/cli.js compare before.json after.json
+npx @lickgrass/sse-path probe https://your-app.example/api/stream-check --out after.json
+npx @lickgrass/sse-path compare before.json after.json
 ```
 
 Invalid URLs, tokens, or timing options are rejected before an output file is created. Use fresh filenames: output is created exclusively with mode `0600`, and existing files and symlinks are never overwritten. The directory must already exist. On POSIX filesystems this requests owner-only access. On Windows, mode `0600` does not set a private ACL: use an output directory whose ACL already limits access appropriately.
@@ -102,7 +105,7 @@ sse-path inspect report.json [--json]
 sse-path compare before.json after.json [--json]
 ```
 
-When using the source checkout, replace `sse-path` with `node dist/cli.js`.
+Run commands with `npx @lickgrass/sse-path`, or use `npx sse-path` inside an application where the package is installed. When using the source checkout, replace `sse-path` with `node dist/cli.js`.
 
 - **`probe`** requests only the supplied diagnostic URL and does not follow redirects. HTTPS and loopback HTTP are allowed; `--allow-http` explicitly permits remote plaintext HTTP on a trusted network. Never send the token over an untrusted plaintext connection.
 - **`inspect`** validates and displays a saved report without making network requests.
